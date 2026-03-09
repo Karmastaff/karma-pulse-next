@@ -13,7 +13,7 @@ import ReactMarkdown from 'react-markdown';
 export default function SLAVault() {
     const [isDragging, setIsDragging] = useState(false);
     const { 
-        folders, activeFolderId, setActiveFolderId, 
+        folders, setFolders, activeFolderId, setActiveFolderId, 
         files, isChatbotOpen, setIsChatbotOpen,
         createFolder, updateFolder, deleteFolder,
         addFiles, updateFile, deleteFile
