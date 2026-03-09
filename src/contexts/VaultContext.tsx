@@ -51,7 +51,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     const [isChatbotOpen, setIsChatbotOpen] = useState<boolean>(false);
     const [isInitialized, setIsInitialized] = useState(false);
 
-    // Initialize files and folders from Supabase
+    // Initialize files and folders from Supabase + Migration
     useEffect(() => {
         const init = async () => {
             console.log("[VAULT] Initializing from Supabase...");
@@ -63,7 +63,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
                 .order('created_at', { ascending: true });
 
             if (folderError) {
-                console.error("Error loading folders from Supabase:", folderError);
+                console.error("[VAULT] CRITICAL: Error loading folders:", folderError.message || folderError);
             } else if (dbFolders) {
                 setFolders(dbFolders.map(f => ({
                     id: f.id,
@@ -82,7 +82,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
                 .order('uploaded_at', { ascending: false });
 
             if (fileError) {
-                console.error("Error loading files from Supabase:", fileError);
+                console.error("[VAULT] CRITICAL: Error loading files:", fileError.message || fileError);
             } else if (dbFiles) {
                 const rehydratedFiles: VaultFile[] = await Promise.all(dbFiles.map(async (f) => {
                     const base: Omit<VaultFile, 'file'> = {
@@ -101,14 +101,72 @@ export function VaultProvider({ children }: { children: ReactNode }) {
                             const file = new File([blob], f.name, { type: f.type, lastModified: parseInt(f.last_modified) });
                             return { ...base, file };
                         } catch (e) {
-                            console.error(`Failed to rehydrate file ${f.name}:`, e);
+                            console.error(`[VAULT] Failed to rehydrate file ${f.name}:`, e);
                         }
                     }
                     
-                    // Fallback for empty files
                     return { ...base, file: new File([], f.name, { type: f.type, lastModified: parseInt(f.last_modified) }) };
                 }));
                 setFiles(rehydratedFiles);
+            }
+
+            // 3. One-time Migration from localStorage
+            try {
+                const localFolders = localStorage.getItem('karma_vault_folders');
+                const localFiles = localStorage.getItem('karma_vault_files');
+                
+                if (localFolders || localFiles) {
+                    console.log("[VAULT] Found legacy local data. Migrating to Supabase...");
+                    const foldersToMigrate: VaultFolder[] = localFolders ? JSON.parse(localFolders) : [];
+                    const filesToMigrate: any[] = localFiles ? JSON.parse(localFiles) : [];
+                    
+                    // Filter out folders that already exist in DB
+                    const existingIds = new Set((dbFolders || []).map(f => f.id));
+                    const newFolders = foldersToMigrate.filter(f => !existingIds.has(f.id));
+                    
+                    if (newFolders.length > 0) {
+                        await supabase.from('vault_folders').upsert(newFolders.map(f => ({
+                            id: f.id,
+                            name: f.name,
+                            color: f.color,
+                            company: f.company,
+                            document_type: f.documentType,
+                            created_at: new Date(f.createdAt).toISOString()
+                        })));
+                    }
+                    
+                    if (filesToMigrate.length > 0) {
+                        const existingFileIds = new Set((dbFiles || []).map(f => f.id));
+                        const newFiles = filesToMigrate.filter(f => !existingFileIds.has(f.id));
+                        if (newFiles.length > 0) {
+                            await supabase.from('vault_files').upsert(newFiles.map(f => ({
+                                id: f.id,
+                                name: f.name || f.file?.name,
+                                type: f.type || f.file?.type,
+                                size: f.size || f.file?.size,
+                                last_modified: f.last_modified || f.file?.lastModified,
+                                folder_id: f.folder_id || f.folderId,
+                                data_url: f.data_url || f.dataUrl,
+                                company: f.company,
+                                document_type: f.document_type || f.documentType || 'sla',
+                                uploaded_at: new Date(f.uploaded_at || f.uploadedAt).toISOString()
+                            })));
+                        }
+                    }
+                    
+                    // Clear local storage after migration
+                    localStorage.removeItem('karma_vault_folders');
+                    localStorage.removeItem('karma_vault_files');
+                    console.log("[VAULT] Migration complete.");
+                    
+                    // Re-init if we migrated
+                    if (newFolders.length > 0 || (filesToMigrate.length > 0)) {
+                        window.location.reload(); 
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.error("[VAULT] Migration error:", e);
             }
 
             setIsInitialized(true);
@@ -124,20 +182,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
         const folderSub = supabase
             .channel('vault_folders_changes')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_folders' }, (payload) => {
-                console.log("[VAULT] Folder change detected:", payload.eventType);
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_folders' }, (payload: any) => {
+                const f = payload.new;
                 if (payload.eventType === 'INSERT') {
-                    const f = payload.new;
-                    setFolders(prev => [...prev, {
-                        id: f.id,
-                        name: f.name,
-                        createdAt: new Date(f.created_at).getTime(),
-                        color: f.color,
-                        company: f.company,
-                        documentType: f.document_type as DocumentType
-                    }]);
+                    setFolders(prev => {
+                        if (prev.find(x => x.id === f.id)) return prev;
+                        return [...prev, {
+                            id: f.id,
+                            name: f.name,
+                            createdAt: new Date(f.created_at).getTime(),
+                            color: f.color,
+                            company: f.company,
+                            documentType: f.document_type as DocumentType
+                        }];
+                    });
                 } else if (payload.eventType === 'UPDATE') {
-                    const f = payload.new;
                     setFolders(prev => prev.map(old => old.id === f.id ? {
                         ...old,
                         name: f.name,
@@ -153,32 +212,26 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
         const fileSub = supabase
             .channel('vault_files_changes')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_files' }, async (payload) => {
-                console.log("[VAULT] File change detected:", payload.eventType);
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_files' }, async (payload: any) => {
+                const f = payload.new;
                 if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-                    const f = payload.new;
-                    // Rehydrate the file skeleton
-                    const base: Omit<VaultFile, 'file'> = {
-                        id: f.id,
-                        folderId: f.folder_id,
-                        uploadedAt: new Date(f.uploaded_at).getTime(),
-                        company: f.company,
-                        documentType: f.document_type as DocumentType,
-                        dataUrl: f.data_url,
-                    };
-                    let fileObj = new File([], f.name, { type: f.type, lastModified: parseInt(f.last_modified) });
-                    if (f.data_url?.startsWith('data:')) {
-                        try {
-                            const res = await fetch(f.data_url);
-                            const blob = await res.blob();
-                            fileObj = new File([blob], f.name, { type: f.type, lastModified: parseInt(f.last_modified) });
-                        } catch(e) { console.error(e); }
-                    }
-
+                    // Optimistic check: if we already have this file with a dataUrl/File object, don't overwrite with skeleton
                     setFiles(prev => {
                         const exists = prev.find(x => x.id === f.id);
-                        if (exists) return prev.map(x => x.id === f.id ? { ...base, file: fileObj } : x);
-                        return [{ ...base, file: fileObj }, ...prev];
+                        if (exists && exists.dataUrl === f.data_url && exists.folderId === f.folder_id && exists.company === f.company) return prev;
+                        
+                        // Otherwise, rehydrate/update
+                        const base: Omit<VaultFile, 'file'> = {
+                            id: f.id,
+                            folderId: f.folder_id,
+                            uploadedAt: new Date(f.uploaded_at).getTime(),
+                            company: f.company,
+                            documentType: f.document_type as DocumentType,
+                            dataUrl: f.data_url,
+                        };
+                        
+                        if (exists) return prev.map(x => x.id === f.id ? { ...base, file: x.file } : x);
+                        return [{ ...base, file: new File([], f.name, { type: f.type, lastModified: parseInt(f.last_modified) }) }, ...prev];
                     });
                 } else if (payload.eventType === 'DELETE') {
                     setFiles(prev => prev.filter(old => old.id === payload.old.id));
@@ -196,19 +249,37 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     const createFolder = async (name: string, type: DocumentType, company?: string) => {
         const id = crypto.randomUUID();
+        const newFolder: VaultFolder = {
+            id,
+            name,
+            createdAt: Date.now(),
+            color: '#f59e0b',
+            company,
+            documentType: type
+        };
+
+        // Optimistic update
+        setFolders(prev => [...prev, newFolder]);
+
         const { error } = await supabase.from('vault_folders').insert({
             id,
             name,
             document_type: type,
             company: company || null,
             color: '#f59e0b',
-            created_at: new Date().toISOString()
+            created_at: new Date(newFolder.createdAt).toISOString()
         });
-        if (error) throw error;
+        if (error) {
+            setFolders(prev => prev.filter(f => f.id !== id)); // rollback
+            throw error;
+        }
         return id;
     };
 
     const updateFolder = async (id: string, updates: Partial<VaultFolder>) => {
+        // Optimistic update
+        setFolders(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+
         const dbUpdates: any = {};
         if (updates.name !== undefined) dbUpdates.name = updates.name;
         if (updates.color !== undefined) dbUpdates.color = updates.color;
@@ -216,15 +287,29 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         if (updates.documentType !== undefined) dbUpdates.document_type = updates.documentType;
 
         const { error } = await supabase.from('vault_folders').update(dbUpdates).match({ id });
-        if (error) throw error;
+        if (error) {
+            // Hard refresh on error to revert state
+            console.error(error);
+            window.location.reload();
+        }
     };
 
     const deleteFolder = async (id: string) => {
+        // Optimistic
+        setFolders(prev => prev.filter(f => f.id !== id));
+        setFiles(prev => prev.filter(f => f.folderId !== id));
+
         const { error } = await supabase.from('vault_folders').delete().match({ id });
-        if (error) throw error;
+        if (error) {
+            console.error(error);
+            window.location.reload();
+        }
     };
 
     const addFiles = async (newFiles: VaultFile[]) => {
+        // Optimistic
+        setFiles(prev => [...newFiles, ...prev]);
+
         const payload = newFiles.map(vf => ({
             id: vf.id,
             name: vf.file.name,
@@ -238,22 +323,35 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             uploaded_at: new Date(vf.uploadedAt).toISOString()
         }));
         const { error } = await supabase.from('vault_files').insert(payload);
-        if (error) throw error;
+        if (error) {
+            setFiles(prev => prev.filter(f => !newFiles.find(nf => nf.id === f.id)));
+            throw error;
+        }
     };
 
     const updateFile = async (id: string, updates: Partial<VaultFile>) => {
+        // Optimistic
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+
         const dbUpdates: any = {};
         if (updates.folderId !== undefined) dbUpdates.folder_id = updates.folderId;
         if (updates.company !== undefined) dbUpdates.company = updates.company || null;
         if (updates.file?.name !== undefined) dbUpdates.name = updates.file.name;
         
         const { error } = await supabase.from('vault_files').update(dbUpdates).match({ id });
-        if (error) throw error;
+        if (error) {
+            console.error(error);
+        }
     };
 
     const deleteFile = async (id: string) => {
+        // Optimistic
+        setFiles(prev => prev.filter(f => f.id !== id));
+
         const { error } = await supabase.from('vault_files').delete().match({ id });
-        if (error) throw error;
+        if (error) {
+            console.error(error);
+        }
     };
 
 
