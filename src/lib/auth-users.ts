@@ -65,8 +65,16 @@ function saveLocalUsers(users: User[]): void {
 export async function ensureSuperAdminExists(): Promise<void> {
     if (IS_PROD) {
         // In prod, check Supabase
-        const { data } = await supabase.from('users').select('id').limit(1);
-        if (data && data.length > 0) return; // Super admin likely exists
+        console.log('[AUTH] Checking for existing users in Supabase...');
+        const { data, error } = await supabase.from('users').select('id').limit(1);
+        if (error) {
+            console.error('[AUTH] Error checking users:', error.message);
+            return;
+        }
+        if (data && data.length > 0) {
+            console.log('[AUTH] Users already exist, skipping seed.');
+            return;
+        }
     } else {
         // Locally, check JSON
         const users = readLocalUsers();
@@ -96,12 +104,19 @@ export async function ensureSuperAdminExists(): Promise<void> {
     };
 
     if (IS_PROD) {
-        await supabase.from('users').insert([seededSA, seededAdmin]);
+        console.log('[AUTH] Seeding default users to Supabase...');
+        const { error } = await supabase.from('users').insert([seededSA, seededAdmin]);
+        if (error) {
+            console.error('[AUTH] Error seeding users:', error.message);
+        } else {
+            console.log('[AUTH] Seeded default super admin: superadmin@karmapulse.com');
+            console.log('[AUTH] Seeded default admin: admin@karmapulse.com');
+        }
     } else {
         saveLocalUsers([seededSA, seededAdmin]);
+        console.log('[AUTH] Seeded default super admin: superadmin@karmapulse.com');
+        console.log('[AUTH] Seeded default admin: admin@karmapulse.com');
     }
-    console.log('[AUTH] Seeded default super admin: superadmin@karmapulse.com');
-    console.log('[AUTH] Seeded default admin: admin@karmapulse.com');
 }
 
 export async function getUsers(): Promise<User[]> {
@@ -126,8 +141,13 @@ export async function getUserById(id: string): Promise<User | null> {
 export async function getUserByEmail(email: string): Promise<User | null> {
     const normalizedEmail = email.toLowerCase();
     if (IS_PROD) {
+        console.log(`[AUTH] Fetching user by email: ${normalizedEmail}`);
         const { data, error } = await supabase.from('users').select('*').ilike('email', normalizedEmail).single();
-        if (error) return null;
+        if (error) {
+            console.error(`[AUTH] [ERROR] Fetching user ${normalizedEmail}:`, error.message);
+            return null;
+        }
+        console.log(`[AUTH] User found in DB: ${data.email} (ID: ${data.id})`);
         return data;
     }
     const users = readLocalUsers();
@@ -166,10 +186,19 @@ export function hashPassword(password: string): string {
 export function verifyPassword(password: string, storedHash: string): boolean {
     try {
         const [salt, hash] = storedHash.split(':');
-        if (!salt || !hash) return false;
+        if (!salt || !hash) {
+            console.error('[AUTH] Invalid stored hash format (missing salt or hash).');
+            return false;
+        }
         const inputHash = crypto.pbkdf2Sync(password, salt, 100_000, 64, 'sha512').toString('hex');
-        return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(inputHash, 'hex'));
-    } catch {
+        const match = crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(inputHash, 'hex'));
+        
+        if (IS_PROD) {
+            console.log(`[AUTH] Password verification result: ${match ? 'SUCCESS' : 'FAILED'}`);
+        }
+        return match;
+    } catch (e: any) {
+        console.error('[AUTH] Exception during password verification:', e.message);
         return false;
     }
 }

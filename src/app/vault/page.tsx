@@ -6,12 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FileText, Bot, UploadCloud, Folder, FileKey, Layers, FileSignature, CheckCircle2, ChevronRight, BarChart3, Clock, AlertCircle, Plus, Edit2, FolderOpen, ArrowRight, X, Trash2, Search, Copy, ThumbsUp, ThumbsDown, Pin, Share2, RefreshCcw, MoreHorizontal, Shield, Mic, MicOff, Palette, Eye, BookOpen } from 'lucide-react';
 import { useVault, VaultFile, DocumentType } from "@/contexts/VaultContext";
+import { supabase } from '@/lib/supabaseClient';
 import ReactMarkdown from 'react-markdown';
 
 
 export default function SLAVault() {
     const [isDragging, setIsDragging] = useState(false);
-    const { folders, setFolders, activeFolderId, setActiveFolderId, files, setFiles, isChatbotOpen, setIsChatbotOpen } = useVault();
+    const { 
+        folders, activeFolderId, setActiveFolderId, 
+        files, isChatbotOpen, setIsChatbotOpen,
+        createFolder, updateFolder, deleteFolder,
+        addFiles, updateFile, deleteFile
+    } = useVault();
 
     // Current logged-in user (for company scoping)
     const [currentUser, setCurrentUser] = useState<{ name: string; company: string; role: string } | null>(null);
@@ -47,8 +53,10 @@ export default function SLAVault() {
     const visibleFolders = folders.filter(folder => {
         if (!currentUser || currentUser.role === 'superadmin') return true;
         if (folder.documentType === 'iicrc_standard') return true;
-        // Legacy untagged folders are NO LONGER visible to normal admins
-        return folder.company === currentUser.company;
+        
+        const userCompany = currentUser.company?.trim().toLowerCase();
+        const folderCompany = folder.company?.trim().toLowerCase();
+        return folderCompany === userCompany;
     });
 
     // Derived state — scoped to visible folders only
@@ -62,7 +70,9 @@ export default function SLAVault() {
             if (f.folderId && scopedFolderIds.has(f.folderId)) return true;
             
             // Otherwise, rely on the file's explicit company tag
-            return f.company === currentUser.company;
+            const userCompany = currentUser.company?.trim().toLowerCase();
+            const fileCompany = f.company?.trim().toLowerCase();
+            return fileCompany === userCompany;
         });
         if (activeFolderId) return allVisible.filter(f => f.folderId === activeFolderId);
         return allVisible;
@@ -182,8 +192,8 @@ export default function SLAVault() {
         { hex: '#84cc16', label: 'Lime' },
     ];
 
-    const setFolderColor = (id: string, color: string) => {
-        setFolders(prev => prev.map(f => f.id === id ? { ...f, color } : f));
+    const setFolderColor = async (id: string, color: string) => {
+        await updateFolder(id, { color });
         setColorPickerFolderId(null);
     };
 
@@ -250,9 +260,7 @@ export default function SLAVault() {
         // Handle File Drop onto Folder
         if (!draggedFileId) return;
 
-        setFiles(prev => prev.map(f =>
-            f.id === draggedFileId ? { ...f, folderId: targetFolderId } : f
-        ));
+        updateFile(draggedFileId, { folderId: targetFolderId });
         setDraggedFileId(null);
     };
 
@@ -298,8 +306,7 @@ export default function SLAVault() {
             documentType: (folders.find(folder => folder.id === activeFolderId)?.documentType ?? 'sla') as DocumentType,
         })));
 
-        const updatedFiles = [...newVaultFiles, ...files];
-        setFiles(updatedFiles);
+        await addFiles(newVaultFiles);
         setActiveVaultFileId(newVaultFiles[0].id);
         simulateProcessing();
     };
@@ -317,21 +324,20 @@ export default function SLAVault() {
         setColorPickerFolderId(null);
     };
 
-    const onDeleteFile = (e: React.MouseEvent, idToDelete: string) => {
+    const onDeleteFile = async (e: React.MouseEvent, idToDelete: string) => {
         e.stopPropagation();
-
-        const updated = files.filter(f => f.id !== idToDelete);
-        setFiles(updated);
-
-        if (activeVaultFileId === idToDelete) {
-            const updatedDisplayed = activeFolderId ? updated.filter(f => f.folderId === activeFolderId) : updated;
-            setActiveVaultFileId(updatedDisplayed.length > 0 ? updatedDisplayed[0].id : null);
-        }
-
-        if (updated.length === 0) setProcessingState('idle');
+        await deleteFile(idToDelete);
+        if (activeVaultFileId === idToDelete) setActiveVaultFileId(null);
     };
 
-    const handleCreateFolder = () => {
+    const onDeleteFolder = async (e: React.MouseEvent, idToDelete: string) => {
+        e.stopPropagation();
+        if (!confirm("Are you sure you want to delete this folder and all its SLAs?")) return;
+        await deleteFolder(idToDelete);
+        if (activeFolderId === idToDelete) setActiveFolderId(null);
+    };
+
+    const handleCreateFolder = async () => {
         if (!newFolderName.trim()) {
             setIsCreatingFolder(false);
             return;
@@ -339,16 +345,10 @@ export default function SLAVault() {
         // Auto-detect IICRC by name if user didn't explicitly pick
         const nameUpper = newFolderName.trim().toUpperCase();
         const detectedType: DocumentType = nameUpper.includes('IICRC') ? 'iicrc_standard' : newFolderType;
-        const newFolder = {
-            id: crypto.randomUUID(),
-            name: newFolderName.trim(),
-            createdAt: Date.now(),
-            // IICRC folders are universal (no company); SLA folders are scoped
-            company: detectedType === 'iicrc_standard' ? undefined : (currentUser?.role === 'superadmin' && newFolderCompany ? newFolderCompany : currentUser?.company),
-            documentType: detectedType,
-        };
-        setFolders([...folders, newFolder]);
-        setActiveFolderId(newFolder.id);
+        const company = detectedType === 'iicrc_standard' ? undefined : (currentUser?.role === 'superadmin' && newFolderCompany ? newFolderCompany : currentUser?.company);
+        
+        const folderId = await createFolder(newFolderName.trim(), detectedType, company);
+        setActiveFolderId(folderId);
         setIsCreatingFolder(false);
         setNewFolderName('');
         setNewFolderType('sla');
@@ -363,12 +363,12 @@ export default function SLAVault() {
         }
     };
 
-    const handleUpdateFolder = () => {
+    const handleUpdateFolder = async () => {
         if (!editingFolderName.trim() || !editingFolderId) {
             setEditingFolderId(null);
             return;
         }
-        setFolders(folders.map(f => f.id === editingFolderId ? { ...f, name: editingFolderName.trim() } : f));
+        await updateFolder(editingFolderId, { name: editingFolderName.trim() });
         setEditingFolderId(null);
         setEditingFolderName('');
     };
@@ -383,18 +383,16 @@ export default function SLAVault() {
         setEditingFolderName(folder.name);
     };
 
-    const handleUpdateFile = () => {
+    const handleUpdateFile = async () => {
         if (!editingFileName.trim() || !editingFileId) {
             setEditingFileId(null);
             return;
         }
-        setFiles(prev => prev.map(vf => {
-            if (vf.id === editingFileId) {
-                const renamedFile = new File([vf.file], editingFileName.trim(), { type: vf.file.type, lastModified: vf.file.lastModified });
-                return { ...vf, file: renamedFile };
-            }
-            return vf;
-        }));
+        const vf = files.find(f => f.id === editingFileId);
+        if (vf) {
+            const renamedFile = new File([vf.file], editingFileName.trim(), { type: vf.file.type, lastModified: vf.file.lastModified });
+            await updateFile(editingFileId, { file: renamedFile });
+        }
         setEditingFileId(null);
         setEditingFileName('');
     };
@@ -1003,6 +1001,17 @@ export default function SLAVault() {
                                                     >
                                                         <Edit2 className="w-4 h-4" strokeWidth={2.5} />
                                                     </button>
+
+                                                    {/* Delete button (Super Admins only) */}
+                                                    {currentUser?.role === 'superadmin' && (
+                                                        <button
+                                                            onClick={(e) => onDeleteFolder(e, folder.id)}
+                                                            className="absolute right-[-2.5rem] p-1.5 rounded-lg hover:bg-red-50 text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                                                            title="Delete Folder"
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             )
                                         ))}
@@ -1224,12 +1233,13 @@ export default function SLAVault() {
 
                         <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                             <button
-                                onClick={() => {
+                                onClick={async () => {
                                     if (sharingFolderId) {
-                                        setFolders(prev => prev.map(f => f.id === sharingFolderId ? { ...f, company: undefined } : f));
-                                        setFiles(prev => prev.map(f => f.folderId === sharingFolderId ? { ...f, company: undefined } : f));
+                                        await updateFolder(sharingFolderId, { company: undefined });
+                                        const folderFiles = files.filter(f => f.folderId === sharingFolderId);
+                                        await Promise.all(folderFiles.map(f => updateFile(f.id, { company: undefined })));
                                     } else if (sharingFileId) {
-                                        setFiles(prev => prev.map(f => f.id === sharingFileId ? { ...f, company: undefined } : f));
+                                        await updateFile(sharingFileId, { company: undefined });
                                     }
                                     setSharingFolderId(null);
                                     setSharingFileId(null);
@@ -1252,12 +1262,13 @@ export default function SLAVault() {
                                 return (
                                     <button
                                         key={c}
-                                        onClick={() => {
+                                        onClick={async () => {
                                             if (sharingFolderId) {
-                                                setFolders(prev => prev.map(f => f.id === sharingFolderId ? { ...f, company: c } : f));
-                                                setFiles(prev => prev.map(f => f.folderId === sharingFolderId ? { ...f, company: c } : f));
+                                                await updateFolder(sharingFolderId, { company: c });
+                                                const folderFiles = files.filter(f => f.folderId === sharingFolderId);
+                                                await Promise.all(folderFiles.map(f => updateFile(f.id, { company: c })));
                                             } else if (sharingFileId) {
-                                                setFiles(prev => prev.map(f => f.id === sharingFileId ? { ...f, company: c } : f));
+                                                await updateFile(sharingFileId, { company: c });
                                             }
                                             setSharingFolderId(null);
                                             setSharingFileId(null);
