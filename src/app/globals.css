@@ -1,26 +1,183 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@plugin "tailwindcss-animate";
+@plugin "@tailwindcss/typography";
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@custom-variant dark (&:is(.dark *));
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@theme {
+  --font-sans: var(--font-inter);
+
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+
+    to {
+      height: 0;
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@utility container {
+  margin-inline: auto;
+  padding-inline: 2rem;
+
+  @media (width >=--theme(--breakpoint-sm)) {
+    max-width: none;
+  }
+
+  @media (width >=1400px) {
+    max-width: 1400px;
+  }
+}
+
+@layer base {
+
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+}
+
+@layer base {
+  :root {
+    /* Pristine Light Theme Base */
+    --background: 210 40% 98%;
+    /* F8FAFC - Soft slate background */
+    --foreground: 222 47% 11%;
+    /* Very dark slate text for high contrast */
+
+    --card: 0 0% 100%;
+    /* Pure white cards */
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Vibrant Blue Accent */
+    --primary: 221 83% 53%;
+    /* 2563EB - Blue 600 */
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96%;
+    /* Lighter slate for secondary buttons/bg */
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    /* 64748b - Slate 500 for secondary text */
+
+    /* Vibrant Violet Accent for alternative highlights */
+    --accent: 262 83% 58%;
+    /* 7C3AED - Violet 600 */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    /* Red 500 */
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214 32% 91%;
+    /* e2e8f0 - Slate 200 */
+    --input: 214 32% 91%;
+
+    --ring: 221 83% 53%;
+    /* Blue 600 */
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    /* Keeping dark mode as a fallback/dark theme alternative */
+    --background: 208 70% 10%;
+    --foreground: 0 0% 100%;
+    --card: 208 70% 14%;
+    --card-foreground: 0 0% 100%;
+    --popover: 208 70% 14%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 208 70% 40%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 208 30% 20%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 208 30% 20%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 208 30% 20%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 348 100% 54%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 208 30% 20%;
+    --input: 208 30% 20%;
+    --ring: 208 70% 40%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Antigravity Specific Components - Pristine Light Theme */
+.glass-card {
+  @apply bg-card text-card-foreground border border-slate-200/60 shadow-xl transition-shadow duration-300;
+}
+
+/* Custom Utilities for the new look */
+.bg-gradient-primary {
+  @apply bg-gradient-to-br from-blue-600 to-violet-600;
+}
+
+.text-gradient-primary {
+  @apply bg-gradient-to-br from-blue-600 to-violet-600 bg-clip-text text-transparent;
 }

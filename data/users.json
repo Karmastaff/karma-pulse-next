@@ -1,0 +1,20 @@
+[
+  {
+    "id": "sa-1773062052296",
+    "name": "Super Admin",
+    "email": "superadmin@karmapulse.com",
+    "company": "KarmaPulse",
+    "role": "superadmin",
+    "passwordHash": "2289f512d23c78b61ffec4bb23850b87:aa5fa3e0aa0277fdadf62e58ef1b44f3bf3e8c53fd3584fd805376ece02fd45772b68271325dce19a5925f8634f1c897bdb4c91c411f069dc7b27dd2fe239984",
+    "createdAt": "2026-03-09T13:14:12.410Z"
+  },
+  {
+    "id": "admin-1773062052296",
+    "name": "Local Admin",
+    "email": "admin@karmapulse.com",
+    "company": "Demo Company Ltd",
+    "role": "admin",
+    "passwordHash": "52a384c0b2bbd1e749cd2fd47918343e:071c9db1e5831df87f1ac8bd004e3bed944f1abc8bd61a271239cffb2928ce368134f92ea919033cac1dc97a1badb3462410e3982003f872f0f9fcc0850f037c",
+    "createdAt": "2026-03-09T13:14:12.491Z"
+  }
+]
